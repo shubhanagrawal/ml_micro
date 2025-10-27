@@ -55,7 +55,7 @@ jobs:
           IMAGE_TAG: latest
         run: |
           # Define repositories for all services
-          SERVICES=("login" "upload" "train" "predict")
+          SERVICES=("auth" "upload" "train" "predict")
 
           for SERVICE in "${SERVICES[@]}"; do
             echo "🚀 Building image for $SERVICE..."
@@ -89,7 +89,7 @@ jobs:
             echo "🔁 Pulling latest images from ECR..."
             aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ECR_LOGIN_URI }}
             
-            SERVICES=("login" "upload" "train" "predict")
+            SERVICES=("auth" "upload" "train" "predict")
             for SERVICE in "${SERVICES[@]}"; do
               docker pull ${{ secrets.AWS_ECR_LOGIN_URI }}/${SERVICE}:latest
             done
