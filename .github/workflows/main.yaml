@@ -87,9 +87,29 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            echo "🔁 Pulling latest images from ECR..."
+            # 1. Install dependencies on the EC2 host
+            sudo apt-get update -y
+            sudo apt-get install -y awscli git
+            
+            # 2. Define project directory
+            PROJECT_DIR="/home/ubuntu/End-to-End-Chest-Cancer-Classification-using-MLfLow"
+            
+            # 3. Get the latest code
+            if [ -d "$PROJECT_DIR" ]; then
+              echo "✅ Project directory exists. Pulling latest code..."
+              cd $PROJECT_DIR
+              git checkout main
+              git pull
+            else
+              echo "🚚 Project directory not found. Cloning repository..."
+              git clone https://github.com/Rishabh1234-hash/End-to-End-Chest-Cancer-Classification-using-MLfLow.git $PROJECT_DIR
+              cd $PROJECT_DIR
+            fi
+            
+            echo "🔁 Logging into ECR and pulling latest images..."
             aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ECR_LOGIN_URI }}
             
+            # 4. Pull all images
             SERVICES=("auth" "upload" "train" "predict")
             for SERVICE in "${SERVICES[@]}"; do
               docker pull ${{ secrets.AWS_ECR_LOGIN_URI }}/${SERVICE}:latest
