@@ -2,16 +2,15 @@ FROM python:3.12-slim
 RUN apt update -y && apt install awscli -y
 WORKDIR /app
 
-# 1. Copy only the files needed for installation first
-# This allows Docker to cache the installed packages layer
-COPY requirements.txt .
-COPY setup.py .  
-COPY README.md .
+COPY requirements.txt setup.py README.md /app/
+
 COPY ./src /app/src
-# 2. Install dependencies
+# 2. Upgrade pip and install dependencies
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
+# 3. Copy the rest of the application code
+COPY . /app
 # 3. Now, copy the rest of your application source code
 ENV PYTHONPATH=/app/src
 COPY . .

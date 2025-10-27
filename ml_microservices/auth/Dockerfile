@@ -4,15 +4,15 @@ WORKDIR /app
 
 # 1. Copy only the files needed for installation first
 # This allows Docker to cache the installed packages layer
-COPY requirements.txt .
-COPY setup.py .  
-COPY README.md .
-# 2. Install dependencies
+# 1. Copy only the files needed for installing dependencies first
+COPY requirements.txt setup.py README.md /app/
+
+# 2. Upgrade pip and install dependencies
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
-# 3. Now, copy the rest of your application source code
-COPY . .
+# 3. Copy the rest of the application code
+COPY . /app
 
 EXPOSE 3001
 
