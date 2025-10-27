@@ -17,3 +17,6 @@ joblib
 types-PyYAML 
 Flask
 Flask-Cors
+uvicorn
+fastapi
+-e . 
