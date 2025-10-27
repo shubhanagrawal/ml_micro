@@ -29,14 +29,12 @@ jobs:
     name: Build & Push Docker Images to ECR
     needs: integration
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: ["interface", "auth", "upload", "train", "predict"]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
-
-      - name: Install Utilities
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq unzip
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -49,21 +47,27 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
 
-      - name: Build, Tag, and Push All Service Images
+      - name: Build, Tag, and Push Image for ${{ matrix.service }}
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: latest
+          SERVICE_NAME: ${{ matrix.service }}
         run: |
-          SERVICES=("auth" "upload" "train" "predict")
+          echo "🚀 Building image for $SERVICE_NAME..."
+          
+          # Set the Dockerfile path. 'interface' uses the root Dockerfile.
+          DOCKERFILE_PATH="./Dockerfile"
+          if [ "$SERVICE_NAME" != "interface" ]; then
+            DOCKERFILE_PATH="./ml_microservices/${SERVICE_NAME}/Dockerfile"
+          fi
 
-          for SERVICE in "${SERVICES[@]}"; do
-            echo "🚀 Building image for $SERVICE..."
-            docker build \
-              -t $ECR_REGISTRY/${SERVICE}:$IMAGE_TAG \
-              -f ml_microservices/${SERVICE}/Dockerfile \
-              .
-            docker push $ECR_REGISTRY/${SERVICE}:$IMAGE_TAG
-          done
+          docker build \
+            -t $ECR_REGISTRY/${SERVICE_NAME}:$IMAGE_TAG \
+            -f $DOCKERFILE_PATH \
+            .
+
+          echo "✅ Build complete. Pushing $SERVICE_NAME to ECR..."
+          docker push $ECR_REGISTRY/${SERVICE_NAME}:$IMAGE_TAG
 
   deploy-to-ec2:
     name: Deploy to EC2
@@ -86,47 +90,48 @@ jobs:
           host: ${{ secrets.EC2_PUBLIC_IP }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
-          script_stop: true
           script: |
-            bash -l -c '
-              set -e
-
-              echo "🧰 Installing dependencies..."
-              sudo apt-get update -y
-              sudo apt-get install -y awscli git docker-compose-plugin
-
-              export PATH=$PATH:/usr/local/bin:/usr/bin
-
-              PROJECT_DIR="/home/ubuntu/End-to-End-Chest-Cancer-Classification-using-MLfLow"
-
-              echo "📦 Checking project directory..."
-              if [ -d "$PROJECT_DIR" ]; then
-                echo "✅ Project directory exists. Updating..."
-                cd $PROJECT_DIR
-                git fetch origin main
-                git reset --hard origin/main
-              else
-                echo "🚚 Cloning repository..."
-                git clone https://github.com/Rishabh1234-hash/End-to-End-Chest-Cancer-Classification-using-MLfLow.git $PROJECT_DIR
-                cd $PROJECT_DIR
-              fi
-
-              echo "🔑 Logging into AWS ECR..."
-              /usr/bin/aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
-                | sudo docker login --username AWS --password-stdin ${{ secrets.AWS_ECR_LOGIN_URI }}
-
-              echo "📥 Pulling latest Docker images..."
-              SERVICES=("auth" "upload" "train" "predict")
-              for SERVICE in "${SERVICES[@]}"; do
-                sudo docker pull ${{ secrets.AWS_ECR_LOGIN_URI }}/${SERVICE}:latest
-              done
-
-              echo "🧹 Cleaning old containers..."
-              sudo docker compose down || true
-              sudo docker system prune -af
-
-              echo "🚀 Starting all containers..."
-              sudo docker compose up -d
-
-              echo "✅ Deployment complete!"
-            '
+            # 1. Install dependencies on the EC2 host
+            echo "Updating apt and installing dependencies..."
+            sudo apt-get update -y
+            sudo apt-get install -y git unzip curl
+            
+            # 2. Install awscli v2
+            echo "Installing AWS CLI v2..."
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip -q awscliv2.zip
+            sudo ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update
+            rm -f awscliv2.zip
+            rm -rf aws
+            echo "AWS CLI successfully installed."
+            
+            # 3. Clone or update the repository
+            export REPO_URL="https://github.com/Rishabh1234-hash/End-to-End-Chest-Cancer-Classification-using-MLfLow.git"
+            export REPO_DIR="End-to-End-Chest-Cancer-Classification-using-MLfLow"
+            
+            if [ -d "$REPO_DIR" ]; then
+              echo "Repository already exists. Pulling latest changes..."
+              cd $REPO_DIR
+              git pull origin main
+            else
+              echo "Cloning repository..."
+              git clone $REPO_URL
+              cd $REPO_DIR
+            fi
+            
+            # 4. Log in to Amazon ECR
+            echo "🔁 Logging in to ECR and pulling latest images..."
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ECR_LOGIN_URI }}
+            
+            SERVICES=("interface" "auth" "upload" "train" "predict")
+            for SERVICE in "${SERVICES[@]}"; do
+              docker pull ${{ secrets.AWS_ECR_LOGIN_URI }}/${SERVICE}:latest
+            done
+            
+            # 5. Stop and restart all containers
+            echo "🧹 Cleaning old containers..."
+            docker compose down || true
+            docker system prune -af
+            
+            echo "🚀 Starting all containers..."
+            docker compose up -d
