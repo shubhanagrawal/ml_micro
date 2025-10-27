@@ -31,7 +31,6 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # Define all 5 services
         service: ["interface", "auth", "upload", "train", "predict"]
 
     steps:
@@ -61,20 +60,20 @@ jobs:
           SERVICE_NAME: ${{ matrix.service }}
         run: |
           echo "🚀 Building image for $SERVICE_NAME..."
-
+          
           # Set the Dockerfile path. 'interface' uses the root Dockerfile.
           DOCKERFILE_PATH="./Dockerfile"
           if [ "$SERVICE_NAME" != "interface" ]; then
             DOCKERFILE_PATH="./ml_microservices/${SERVICE_NAME}/Dockerfile"
           fi
-
+          
           echo "Using Dockerfile at: $DOCKERFILE_PATH"
 
           docker build \
             -t $ECR_REGISTRY/${SERVICE_NAME}:$IMAGE_TAG \
             -f $DOCKERFILE_PATH \
             .
-
+          
           echo "🚀 Pushing image for $SERVICE_NAME..."
           docker push $ECR_REGISTRY/${SERVICE_NAME}:$IMAGE_TAG
 
@@ -130,6 +129,11 @@ jobs:
             echo "🧹 Cleaning old containers and images FIRST to save space..."
             ECR_LOGIN_URI=$ECR_URI sudo docker compose down --remove-orphans || true
             sudo docker system prune -af
+
+            # *** NEW COMMAND TO CLEAR APT CACHE ***
+            echo "🧹 Clearing system apt cache..."
+            sudo apt-get clean -y
+            # *** END OF NEW COMMAND ***
 
             echo "📥 Pulling latest Docker images..."
             SERVICES=("interface" "auth" "upload" "train" "predict")
