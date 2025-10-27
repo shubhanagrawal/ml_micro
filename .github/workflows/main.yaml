@@ -1,105 +1,103 @@
 name: Chest Cancer Pipeline
 
 on:
-push:
-branches:
-- main
-paths-ignore:
-- 'README.md'
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'README.md'
 
 permissions:
-id-token: write
-contents: read
+  id-token: write
+  contents: read
 
 jobs:
-integration:
-name: Continuous Integration
-runs-on: ubuntu-latest
-steps:
-- name: Checkout Code
-uses: actions/checkout@v3
+  integration:
+    name: Continuous Integration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
-  - name: Lint Code
-    run: echo "Linting repository"
+      - name: Lint Code
+        run: echo "Linting repository"
 
-  - name: Run Unit Tests
-    run: echo "Running unit tests"
+      - name: Run Unit Tests
+        run: echo "Running unit tests"
 
+  build-and-push-ecr-image:
+    name: Build & Push Docker Images to ECR
+    needs: integration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
-build-and-push-ecr-image:
-name: Build & Push Docker Images to ECR
-needs: integration
-runs-on: ubuntu-latest
-steps:
-- name: Checkout Code
-uses: actions/checkout@v3
+      - name: Install Utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq unzip
 
-  - name: Install Utilities
-    run: |
-      sudo apt-get update
-      sudo apt-get install -y jq unzip
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-  - name: Configure AWS Credentials
-    uses: aws-actions/configure-aws-credentials@v1
-    with:
-      aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      aws-region: ${{ secrets.AWS_REGION }}
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
 
-  - name: Login to Amazon ECR
-    id: login-ecr
-    uses: aws-actions/amazon-ecr-login@v1
+      - name: Build, Tag, and Push All Service Images
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: latest
+        run: |
+          SERVICES=("auth" "upload" "train" "predict")
 
-  - name: Build, Tag, and Push All Service Images
-    env:
-      ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-      IMAGE_TAG: latest
-    run: |
-      SERVICES=("auth" "upload" "train" "predict")
+          for SERVICE in "${SERVICES[@]}"; do
+            echo "🚀 Building image for $SERVICE..."
+            docker build \
+              -t $ECR_REGISTRY/${SERVICE}:$IMAGE_TAG \
+              -f ml_microservices/${SERVICE}/Dockerfile \
+              .
+            docker push $ECR_REGISTRY/${SERVICE}:$IMAGE_TAG
+          done
 
-      for SERVICE in "${SERVICES[@]}"; do
-        echo "🚀 Building image for $SERVICE..."
-        docker build \
-          -t $ECR_REGISTRY/${SERVICE}:$IMAGE_TAG \
-          -f ml_microservices/${SERVICE}/Dockerfile \
-          .  # <-- This is the corrected build context
-        docker push $ECR_REGISTRY/${SERVICE}:$IMAGE_TAG
-      done
+  deploy-to-ec2:
+    name: Deploy to EC2
+    needs: build-and-push-ecr-image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
 
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-deploy-to-ec2:
-name: Deploy to EC2
-needs: build-and-push-ecr-image
-runs-on: ubuntu-latest
-steps:
-- name: Checkout Repository
-uses: actions/checkout@v3
+      - name: Connect to EC2 & Deploy via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.EC2_PUBLIC_IP }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            echo "🔁 Pulling latest images from ECR..."
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ECR_LOGIN_URI }}
+            
+            SERVICES=("auth" "upload" "train" "predict")
+            for SERVICE in "${SERVICES[@]}"; do
+              docker pull ${{ secrets.AWS_ECR_LOGIN_URI }}/${SERVICE}:latest
+            done
 
-  - name: Configure AWS Credentials
-    uses: aws-actions/configure-aws-credentials@v1
-    with:
-      aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      aws-region: ${{ secrets.AWS_REGION }}
+            echo "🧹 Cleaning old containers..."
+            docker compose down || true
+            docker system prune -af
 
-  - name: Connect to EC2 & Deploy via SSH
-    uses: appleboy/ssh-action@master
-    with:
-      host: ${{ secrets.EC2_PUBLIC_IP }}
-      username: ubuntu
-      key: ${{ secrets.EC2_SSH_KEY }}
-      script: |
-        echo "🔁 Pulling latest images from ECR..."
-        aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ECR_LOGIN_URI }}
-        
-        SERVICES=("auth" "upload" "train" "predict")
-        for SERVICE in "${SERVICES[@]}"; do
-          docker pull ${{ secrets.AWS_ECR_LOGIN_URI }}/${SERVICE}:latest
-        done
-
-        echo "🧹 Cleaning old containers..."
-        docker compose down || true
-        docker system prune -af
-
-        echo "🚀 Starting all containers..."
-        docker compose up -d
+            echo "🚀 Starting all containers..."
+            docker compose up -d
