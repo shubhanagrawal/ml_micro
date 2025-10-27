@@ -3,8 +3,7 @@ RUN apt update -y && apt install awscli -y
 WORKDIR /app
 
 COPY requirements.txt setup.py README.md /app/
-
-COPY ./src /app/src
+COPY src /app/src
 # 2. Upgrade pip and install dependencies
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
