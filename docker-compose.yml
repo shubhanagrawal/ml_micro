@@ -1,30 +1,34 @@
 version: '3.9'
 
-# 1. Define the shared network so containers can talk to each other
+# ======================================
+# 1. Shared Network — allows containers to communicate
+# ======================================
 networks:
   cnn-network:
     driver: bridge
 
-# 2. Define the named volumes for sharing uploads and models
+# ======================================
+# 2. Named Volumes — shared data across containers
+# ======================================
 volumes:
-  uploads-data:
+  uploads-data:  # For sharing uploaded images
     driver: local
-  model-data: # Added this in case your train service saves a new model
+  model-data:    # For sharing the trained model
     driver: local
 
+# ======================================
+# 3. Service Definitions
+# ======================================
 services:
-  # 3. ADDED: The 'interface' service for app.py
+  # ----------------------------
+  # Interface Service (Frontend / app.py)
+  # ----------------------------
   interface-service:
-    # This 'interface' name matches the service we built in GitHub Actions
-    image: ${{ secrets.AWS_ECR_LOGIN_URI }}/interface:latest
+    image: ${ECR_LOGIN_URI}/interface:latest
     container_name: interface_service
-    # 'build' block is kept for local testing, but 'image' is used by deploy
-    build:
-      context: .
-      dockerfile: ./Dockerfile
     ports:
-      - "8080:8080" # This is the public-facing port for your app
-    networks: # Add to the shared network
+      - "8080:8080"
+    networks:
       - cnn-network
     restart: always
     depends_on:
@@ -33,11 +37,11 @@ services:
       - predict-service
       - train-service
 
+  # ----------------------------
+  # Authentication Service
+  # ----------------------------
   auth-service:
-    image: ${{ secrets.AWS_ECR_LOGIN_URI }}/auth:latest # Added image key
-    build:
-      context: .
-      dockerfile: ./ml_microservices/auth/Dockerfile
+    image: ${ECR_LOGIN_URI}/auth:latest
     container_name: auth_service
     ports:
       - "3001:3001"
@@ -45,55 +49,50 @@ services:
       - cnn-network
     restart: always
 
+  # ----------------------------
+  # Upload Service
+  # ----------------------------
   upload-service:
-    image: ${{ secrets.AWS_ECR_LOGIN_URI }}/upload:latest # Added image key
-    build:
-      context: .
-      dockerfile: ./ml_microservices/upload/Dockerfile
+    image: ${ECR_LOGIN_URI}/upload:latest
     container_name: upload_service
     ports:
       - "3002:3002"
     volumes:
-      # 4. Use the named volume 'uploads-data' to store uploads
-      - uploads-data:/app/uploads
+      - uploads-data:/app/uploads   # Shares uploaded images
     networks:
       - cnn-network
     depends_on:
       - auth-service
     restart: always
 
+  # ----------------------------
+  # Prediction Service
+  # ----------------------------
   predict-service:
-    image: ${{ secrets.AWS_ECR_LOGIN_URI }}/predict:latest # Added image key
-    build:
-      context: .
-      dockerfile: ./ml_microservices/predict/Dockerfile
+    image: ${ECR_LOGIN_URI}/predict:latest
     container_name: predict_service
     ports:
       - "3003:3003"
     volumes:
-      # Mount the same named volume here so it can read the uploads
-      - uploads-data:/app/uploads
-      # Use a named volume for the model as well
-      - model-data:/app/model
+      - uploads-data:/app/uploads   # Reads uploaded images
+      - model-data:/app/model       # Reads trained model
     networks:
       - cnn-network
     depends_on:
       - upload-service
     restart: always
 
+  # ----------------------------
+  # Training Service
+  # ----------------------------
   train-service:
-    image: ${{ secrets.AWS_ECR_LOGIN_URI }}/train:latest # Added image key
-    build:
-      context: .
-      dockerfile: ./ml_microservices/train/Dockerfile
+    image: ${ECR_LOGIN_URI}/train:latest
     container_name: train_service
     ports:
       - "3004:3004"
     volumes:
-      # Mount the model volume so it can save the trained model
-      - model-data:/app/model
-      # Mount the uploads volume so it can find the training data
-      - uploads-data:/app/data/train
+      - uploads-data:/app/data/train  # Reads uploads for training
+      - model-data:/app/model         # Saves trained model
     networks:
       - cnn-network
     depends_on:
