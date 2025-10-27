@@ -1,14 +1,14 @@
 version: '3.9'
 
 # ======================================
-# 1. Shared Network — allows containers to communicate
+# 1. Shared network so containers can talk to each other
 # ======================================
 networks:
   cnn-network:
     driver: bridge
 
 # ======================================
-# 2. Named Volumes — shared data across containers
+# 2. Named volumes for persistent shared data
 # ======================================
 volumes:
   uploads-data:  # For sharing uploaded images
@@ -17,14 +17,14 @@ volumes:
     driver: local
 
 # ======================================
-# 3. Service Definitions
+# 3. Service definitions
 # ======================================
 services:
   # ----------------------------
   # Interface Service (Frontend / app.py)
   # ----------------------------
   interface-service:
-    image: ${ECR_LOGIN_URI}/interface:latest
+    image: ${AWS_ECR_LOGIN_URI}/interface:latest
     container_name: interface_service
     ports:
       - "8080:8080"
@@ -41,7 +41,7 @@ services:
   # Authentication Service
   # ----------------------------
   auth-service:
-    image: ${ECR_LOGIN_URI}/auth:latest
+    image: ${AWS_ECR_LOGIN_URI}/auth:latest
     container_name: auth_service
     ports:
       - "3001:3001"
@@ -53,12 +53,12 @@ services:
   # Upload Service
   # ----------------------------
   upload-service:
-    image: ${ECR_LOGIN_URI}/upload:latest
+    image: ${AWS_ECR_LOGIN_URI}/upload:latest
     container_name: upload_service
     ports:
       - "3002:3002"
     volumes:
-      - uploads-data:/app/uploads   # Shares uploaded images
+      - uploads-data:/app/uploads  # Shares the uploaded images
     networks:
       - cnn-network
     depends_on:
@@ -69,13 +69,13 @@ services:
   # Prediction Service
   # ----------------------------
   predict-service:
-    image: ${ECR_LOGIN_URI}/predict:latest
+    image: ${AWS_ECR_LOGIN_URI}/predict:latest
     container_name: predict_service
     ports:
       - "3003:3003"
     volumes:
-      - uploads-data:/app/uploads   # Reads uploaded images
-      - model-data:/app/model       # Reads trained model
+      - uploads-data:/app/uploads   # Reads the uploaded images
+      - model-data:/app/model       # Reads the trained model
     networks:
       - cnn-network
     depends_on:
@@ -86,13 +86,13 @@ services:
   # Training Service
   # ----------------------------
   train-service:
-    image: ${ECR_LOGIN_URI}/train:latest
+    image: ${AWS_ECR_LOGIN_URI}/train:latest
     container_name: train_service
     ports:
       - "3004:3004"
     volumes:
-      - uploads-data:/app/data/train  # Reads uploads for training
-      - model-data:/app/model         # Saves trained model
+      - uploads-data:/app/data/train  # Reads uploads to use for training
+      - model-data:/app/model         # Saves the trained model here
     networks:
       - cnn-network
     depends_on:

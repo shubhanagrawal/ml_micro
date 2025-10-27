@@ -31,10 +31,17 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        # Define all your services here
         service: ["interface", "auth", "upload", "train", "predict"]
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
+
+      - name: Install Utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq unzip
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -47,7 +54,7 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
 
-      - name: Build, Tag, and Push Image for ${{ matrix.service }}
+      - name: Build, Tag, and Push Image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: latest
@@ -60,13 +67,15 @@ jobs:
           if [ "$SERVICE_NAME" != "interface" ]; then
             DOCKERFILE_PATH="./ml_microservices/${SERVICE_NAME}/Dockerfile"
           fi
+          
+          echo "Using Dockerfile at: $DOCKERFILE_PATH"
 
           docker build \
             -t $ECR_REGISTRY/${SERVICE_NAME}:$IMAGE_TAG \
             -f $DOCKERFILE_PATH \
             .
-
-          echo "✅ Build complete. Pushing $SERVICE_NAME to ECR..."
+          
+          echo "🚀 Pushing image for $SERVICE_NAME..."
           docker push $ECR_REGISTRY/${SERVICE_NAME}:$IMAGE_TAG
 
   deploy-to-ec2:
@@ -77,61 +86,56 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v1
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
       - name: Connect to EC2 & Deploy via SSH
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.EC2_PUBLIC_IP }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
           script: |
-            # 1. Install dependencies on the EC2 host
-            echo "Updating apt and installing dependencies..."
+            set -e
+
+            echo "🧰 Installing dependencies (git, curl, unzip)..."
             sudo apt-get update -y
-            sudo apt-get install -y git unzip curl
-            
-            # 2. Install awscli v2
-            echo "Installing AWS CLI v2..."
+            sudo apt-get install -y git curl unzip
+
+            echo "🔧 Installing/Updating AWS CLI..."
             curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-            unzip -q awscliv2.zip
+            unzip -o awscliv2.zip
             sudo ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update
-            rm -f awscliv2.zip
-            rm -rf aws
-            echo "AWS CLI successfully installed."
-            
-            # 3. Clone or update the repository
-            export REPO_URL="https://github.com/Rishabh1234-hash/End-to-End-Chest-Cancer-Classification-using-MLfLow.git"
-            export REPO_DIR="End-to-End-Chest-Cancer-Classification-using-MLfLow"
-            
-            if [ -d "$REPO_DIR" ]; then
-              echo "Repository already exists. Pulling latest changes..."
-              cd $REPO_DIR
-              git pull origin main
+            rm -rf awscliv2.zip aws
+
+            PROJECT_DIR="/home/ubuntu/End-to-End-Chest-Cancer-Classification-using-MLfLow"
+
+            echo "📦 Checking project directory..."
+            if [ -d "$PROJECT_DIR" ]; then
+              echo "✅ Project directory exists. Updating..."
+              cd $PROJECT_DIR
+              git fetch origin main
+              git reset --hard origin/main
             else
-              echo "Cloning repository..."
-              git clone $REPO_URL
-              cd $REPO_DIR
+              echo "🚚 Cloning repository..."
+              git clone https://github.com/Rishabh1234-hash/End-to-End-Chest-Cancer-Classification-using-MLfLow.git $PROJECT_DIR
+              cd $PROJECT_DIR
             fi
-            
-            # 4. Log in to Amazon ECR
-            echo "🔁 Logging in to ECR and pulling latest images..."
-            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ECR_LOGIN_URI }}
-            
+
+            echo "🔑 Logging into AWS ECR..."
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
+              | sudo docker login --username AWS --password-stdin ${{ secrets.AWS_ECR_LOGIN_URI }}
+
+            echo "📥 Pulling latest Docker images..."
+            ECR_URI=${{ secrets.AWS_ECR_LOGIN_URI }}
             SERVICES=("interface" "auth" "upload" "train" "predict")
             for SERVICE in "${SERVICES[@]}"; do
-              docker pull ${{ secrets.AWS_ECR_LOGIN_URI }}/${SERVICE}:latest
+              sudo docker pull $ECR_URI/${SERVICE}:latest
             done
-            
-            # 5. Stop and restart all containers
+
             echo "🧹 Cleaning old containers..."
-            docker compose down || true
-            docker system prune -af
-            
+            ECR_LOGIN_URI=$ECR_URI sudo docker compose down --remove-orphans || true
+            sudo docker system prune -af
+
             echo "🚀 Starting all containers..."
-            docker compose up -d
+            ECR_LOGIN_URI=$ECR_URI sudo docker compose up -d
+
+            echo "✅ Deployment complete!"
