@@ -1,16 +1,52 @@
 version: '3.9'
 
+# 1. Define the shared network so containers can talk to each other
+networks:
+  cnn-network:
+    driver: bridge
+
+# 2. Define the named volumes for sharing uploads and models
+volumes:
+  uploads-data:
+    driver: local
+  model-data: # Added this in case your train service saves a new model
+    driver: local
+
 services:
+  # 3. ADDED: The 'interface' service for app.py
+  interface-service:
+    # This 'interface' name matches the service we built in GitHub Actions
+    image: ${{ secrets.AWS_ECR_LOGIN_URI }}/interface:latest
+    container_name: interface_service
+    # 'build' block is kept for local testing, but 'image' is used by deploy
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    ports:
+      - "8080:8080" # This is the public-facing port for your app
+    networks: # Add to the shared network
+      - cnn-network
+    restart: always
+    depends_on:
+      - auth-service
+      - upload-service
+      - predict-service
+      - train-service
+
   auth-service:
+    image: ${{ secrets.AWS_ECR_LOGIN_URI }}/auth:latest # Added image key
     build:
       context: .
       dockerfile: ./ml_microservices/auth/Dockerfile
     container_name: auth_service
     ports:
       - "3001:3001"
+    networks:
+      - cnn-network
     restart: always
 
   upload-service:
+    image: ${{ secrets.AWS_ECR_LOGIN_URI }}/upload:latest # Added image key
     build:
       context: .
       dockerfile: ./ml_microservices/upload/Dockerfile
@@ -18,12 +54,16 @@ services:
     ports:
       - "3002:3002"
     volumes:
-      - ./ml_microservices/upload/uploads:/app/uploads
+      # 4. Use the named volume 'uploads-data' to store uploads
+      - uploads-data:/app/uploads
+    networks:
+      - cnn-network
     depends_on:
       - auth-service
     restart: always
 
   predict-service:
+    image: ${{ secrets.AWS_ECR_LOGIN_URI }}/predict:latest # Added image key
     build:
       context: .
       dockerfile: ./ml_microservices/predict/Dockerfile
@@ -31,13 +71,18 @@ services:
     ports:
       - "3003:3003"
     volumes:
-      - ./model:/app/model
-      - ./ml_microservices/upload/uploads:/app/uploads
+      # Mount the same named volume here so it can read the uploads
+      - uploads-data:/app/uploads
+      # Use a named volume for the model as well
+      - model-data:/app/model
+    networks:
+      - cnn-network
     depends_on:
       - upload-service
     restart: always
 
   train-service:
+    image: ${{ secrets.AWS_ECR_LOGIN_URI }}/train:latest # Added image key
     build:
       context: .
       dockerfile: ./ml_microservices/train/Dockerfile
@@ -45,8 +90,12 @@ services:
     ports:
       - "3004:3004"
     volumes:
-      - ./model:/app/model
-      - ./data/train:/app/data/train
+      # Mount the model volume so it can save the trained model
+      - model-data:/app/model
+      # Mount the uploads volume so it can find the training data
+      - uploads-data:/app/data/train
+    networks:
+      - cnn-network
     depends_on:
       - predict-service
     restart: always
