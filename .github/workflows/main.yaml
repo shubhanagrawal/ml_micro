@@ -54,11 +54,15 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: latest
         run: |
+          # List of microservices
           SERVICES=("auth" "upload" "train" "predict")
 
           for SERVICE in "${SERVICES[@]}"; do
             echo "🚀 Building image for $SERVICE..."
-            docker build -t $ECR_REGISTRY/${SERVICE}:$IMAGE_TAG -f $SERVICE/Dockerfile $SERVICE
+            # Dockerfile path and build context updated for ml_microservices/
+            docker build -t $ECR_REGISTRY/${SERVICE}:$IMAGE_TAG \
+              -f ml_microservices/$SERVICE/Dockerfile \
+              ml_microservices/$SERVICE
             docker push $ECR_REGISTRY/${SERVICE}:$IMAGE_TAG
           done
 
@@ -66,7 +70,6 @@ jobs:
     name: Deploy to EC2
     needs: build-and-push-ecr-image
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v3
@@ -86,8 +89,9 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             echo "🔁 Pulling latest images from ECR..."
-            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ECR_LOGIN_URI }}
-            
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
+              docker login --username AWS --password-stdin ${{ secrets.AWS_ECR_LOGIN_URI }}
+
             SERVICES=("auth" "upload" "train" "predict")
             for SERVICE in "${SERVICES[@]}"; do
               docker pull ${{ secrets.AWS_ECR_LOGIN_URI }}/${SERVICE}:latest
